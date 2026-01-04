@@ -60,31 +60,31 @@ class HFDataDownloader:
     """從 Hugging Face 下載加密貨幣數據"""
     
     def __init__(self):
-        # 创建數據目錄
+        # 創建數據目錄
         self.data_dir = Path('data')
         self.data_dir.mkdir(exist_ok=True)
-        logger.info(f'数据目录: {self.data_dir.absolute()}')
+        logger.info(f'數據目錄: {self.data_dir.absolute()}')
     
     def _get_file_name(self, symbol, timeframe):
         """
         根據符號和時間框架生成文件名
         
-        有効判斷: HF 上的文件名可能是 BTC_15m.parquet 或 BTCUSDT_15m.parquet
+        有效判斷: HF 上的文件名可能是 BTC_15m.parquet 或 BTCUSDT_15m.parquet
         """
-        # 第一種格式：符號不包含 USDT 后罐
+        # 第一種格式：符號不包含 USDT 後綴
         symbol_short = symbol.replace('USDT', '')
         return f"{symbol_short}_{timeframe}.parquet"
     
     def download_single_file(self, symbol, timeframe):
         """
-        下載单個文件
+        下載單個文件
         
         Args:
             symbol: 幣種 (e.g., 'BTCUSDT')
             timeframe: 時間框架 (e.g., '15m')
         
         Returns:
-            True 如果成功， False 否則
+            True 如果成功，False 否則
         """
         try:
             file_name = self._get_file_name(symbol, timeframe)
@@ -102,26 +102,37 @@ class HFDataDownloader:
                 force_download=False,  # 已存在則不重新下載
             )
             
-            # 讀取數據檢查
-            df = pd.read_parquet(file_path)
-            logger.info(f'  成功! 数据量: {len(df)} 行')
-            logger.info(f'  文件位置: {file_path}')
-            logger.info(f'  列: {list(df.columns)}')
+            logger.info(f'  已下載: {file_path}')
             
-            # 轉換成 CSV 格式（可選）
+            # 讀取 Parquet 文件
+            try:
+                df = pd.read_parquet(file_path)
+                logger.info(f'  成功! 數據量: {len(df)} 行')
+                logger.info(f'  列: {list(df.columns)}')
+            except Exception as e:
+                logger.error(f'  讀取 Parquet 失敗: {e}')
+                logger.error(f'  解決方案: 安裝 pyarrow 或 fastparquet')
+                logger.error(f'    pip install pyarrow')
+                return False
+            
+            # 轉換成 CSV 格式
             csv_file = self.data_dir / f"{symbol}_{timeframe}.csv"
             df.to_csv(csv_file, index=False)
             logger.info(f'  已保存種 CSV: {csv_file}')
             
             return True
             
+        except FileNotFoundError as e:
+            logger.error(f'  文件未找到: {e}')
+            logger.error(f'  檢查 HF 上是否有此文件')
+            return False
         except Exception as e:
             logger.error(f'  下載失敗: {e}')
             return False
     
     def download_all_data(self, symbols=None, timeframes=None):
         """
-        下載所有数据
+        下載所有數據
         
         Args:
             symbols: 要下載的符號列表 (None = 下載所有)
@@ -164,16 +175,20 @@ class HFDataDownloader:
         parquet_files = list(self.data_dir.glob('**/*.parquet'))
         
         if csv_files:
-            logger.info(f'\nCSV 文件 ({len(csv_files)}):')
+            logger.info(f'\nCSV 文件 ({len(csv_files)}):')  
             for f in sorted(csv_files):
                 size_mb = f.stat().st_size / (1024 * 1024)
                 logger.info(f'  - {f.name} ({size_mb:.2f} MB)')
+        else:
+            logger.warning('  未找到 CSV 文件!')
         
         if parquet_files:
             logger.info(f'\nParquet 文件 ({len(parquet_files)}):')
-            for f in sorted(parquet_files):
+            for f in sorted(parquet_files)[:5]:  # 只顯示前 5 個
                 size_mb = f.stat().st_size / (1024 * 1024)
                 logger.info(f'  - {f.relative_to(self.data_dir)} ({size_mb:.2f} MB)')
+            if len(parquet_files) > 5:
+                logger.info(f'  ... 還有 {len(parquet_files) - 5} 個 Parquet 文件')
 
 
 def download_specific_symbols(symbols_list):
@@ -191,14 +206,24 @@ def download_all():
 
 
 def main():
-    """主函数 - 選擇下載模式"""
+    """主函數 - 選擇下載模式"""
     import sys
     
     logger.info('='*60)
     logger.info('Hugging Face 加密貨幣數據下載器')
     logger.info('='*60)
     
-    # 方案 1: 下載所有数据 (▼詳推)
+    # 檢查依賴
+    try:
+        import pyarrow
+        logger.info('✓ pyarrow 已安裝')
+    except ImportError:
+        logger.warning('⚠ 未檢測到 pyarrow 或 fastparquet')
+        logger.warning('  無法讀取 Parquet 文件!')
+        logger.warning('  請安裝：pip install pyarrow')
+        return
+    
+    # 方案 1: 下載所有數據 (推薦)
     download_all()
     
     # 方案 2: 只下載特定符號
