@@ -1,6 +1,9 @@
 """
 完整的標籤生成流程修復腳本
 適用於 BB Bounce ML V3 專案
+
+已驗證資料目錄: ./data/
+CSV 檔案數量: 44 個 (22 x 15m, 22 x 1h)
 """
 
 import pandas as pd
@@ -8,6 +11,7 @@ import numpy as np
 from pathlib import Path
 import logging
 from datetime import datetime
+import sys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +27,17 @@ class ProfitabilityLabelGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
+        # 驗證資料目錄
+        if not self.data_dir.exists():
+            raise FileNotFoundError(f"資料目錄不存在: {self.data_dir.absolute()}")
+        
+        csv_count = len(list(self.data_dir.glob('*_15m.csv')))
+        if csv_count == 0:
+            raise FileNotFoundError(f"在 {self.data_dir} 找不到任何 CSV 檔案")
+        
+        logger.info(f"資料目錄驗證成功: {self.data_dir.absolute()}")
+        logger.info(f"發現 {csv_count} 個 15m CSV 檔案")
+        
         # 標籤生成參數
         self.min_bounce_pct = 0.5  # 最小反彈百分比
         self.min_candles_recovery = 5  # 最少恢復蠟燭數
@@ -30,7 +45,7 @@ class ProfitabilityLabelGenerator:
         
     def find_csv_files(self):
         """尋找所有 CSV 檔案"""
-        csv_files = list(self.data_dir.glob('*_15m.csv'))
+        csv_files = sorted(self.data_dir.glob('*_15m.csv'))
         logger.info(f"找到 {len(csv_files)} 個 15m CSV 檔案")
         return csv_files
     
@@ -52,6 +67,7 @@ class ProfitabilityLabelGenerator:
             required_cols = ['open', 'high', 'low', 'close', 'volume']
             if not all(col in df.columns for col in required_cols):
                 logger.warning(f"{symbol} 缺少必要列: {required_cols}")
+                logger.info(f"現有列: {list(df.columns)}")
                 return None
             
             # 計算 Bollinger Bands
@@ -78,6 +94,8 @@ class ProfitabilityLabelGenerator:
             
         except Exception as e:
             logger.error(f"處理 {csv_file.name} 時出錯: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def _calculate_bollinger_bands(self, df, period=20, std_dev=2):
@@ -148,13 +166,23 @@ class ProfitabilityLabelGenerator:
             return []
         
         results = []
-        for csv_file in csv_files:
+        successful = 0
+        failed = 0
+        
+        for idx, csv_file in enumerate(csv_files, 1):
+            logger.info(f"\n進度: {idx}/{len(csv_files)}")
             result = self.generate_labels(csv_file)
             if result:
                 results.append(result)
+                successful += 1
+            else:
+                failed += 1
+        
+        logger.info(f"\n處理完成: {successful} 成功, {failed} 失敗")
         
         # 生成統計報告
-        self._print_summary(results)
+        if results:
+            self._print_summary(results)
         
         return results
     
@@ -171,7 +199,7 @@ class ProfitabilityLabelGenerator:
         logger.info(f"已處理交易對: {total_symbols}")
         logger.info(f"總行數: {total_rows:,}")
         logger.info(f"有效交易標籤: {total_valid_trades:,}")
-        logger.info(f"輸出目錄: {self.output_dir}")
+        logger.info(f"輸出目錄: {self.output_dir.absolute()}")
         logger.info("="*70)
         
         # 詳細表
@@ -188,39 +216,45 @@ def main():
     logger.info("開始 BB Bounce 標籤生成流程")
     logger.info("="*70)
     
-    # 確定資料目錄
-    # 如果您的 CSV 檔案在其他位置，請修改這裡
+    # 明確指定資料目錄
+    # 根據 find_csv_files.py 的診斷結果，CSV 檔案位於 ./data/
     data_dir = Path('data')
     
-    if not data_dir.exists():
-        # 如果 data 目錄不存在，嘗試其他常見位置
-        alt_locations = [
-            Path('.'),  # 當前目錄
-            Path('datasets--zongowo111--v2-crypto-ohlcv-data'),
-            Path('datasets'),
-        ]
+    try:
+        # 創建生成器並處理
+        generator = ProfitabilityLabelGenerator(
+            data_dir=str(data_dir),
+            output_dir='outputs/labels'
+        )
         
-        for alt_dir in alt_locations:
-            if list(alt_dir.glob('*_15m.csv')):
-                data_dir = alt_dir
-                break
-    
-    logger.info(f"使用資料目錄: {data_dir}")
-    
-    # 創建生成器並處理
-    generator = ProfitabilityLabelGenerator(
-        data_dir=str(data_dir),
-        output_dir='outputs/labels'
-    )
-    
-    results = generator.process_all()
-    
-    if results:
-        logger.info("\n標籤生成成功！")
-        logger.info("現在您可以執行訓練腳本:")
-        logger.info("  python trainbbmodel.py")
-    else:
-        logger.error("標籤生成失敗。請檢查資料檔案位置。")
+        results = generator.process_all()
+        
+        if results:
+            logger.info("\n" + "="*70)
+            logger.info("標籤生成成功！")
+            logger.info("="*70)
+            logger.info("\n下一步操作:")
+            logger.info("  1. 檢查輸出: outputs/labels/ 目錄")
+            logger.info("  2. 執行訓練: python trainbbmodel.py")
+            logger.info("  3. 檢查模型: outputs/models/ 目錄")
+        else:
+            logger.error("\n標籤生成失敗。請檢查資料檔案位置。")
+            sys.exit(1)
+            
+    except FileNotFoundError as e:
+        logger.error(f"\n發生錯誤: {str(e)}")
+        logger.error("\n請確保:")
+        logger.error("  1. 您位於正確的專案目錄")
+        logger.error("  2. ./data/ 目錄存在")
+        logger.error("  3. ./data/ 目錄包含 CSV 檔案")
+        logger.error("\n可以執行診斷:")
+        logger.error("  python find_csv_files.py")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"\n發生未預期的錯誤: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == '__main__':
