@@ -3,7 +3,7 @@
 
 流程：
 1. 載入標籤數據
-2. 提取 K 棒特弶（高度、寶寶、上下影線等）
+2. 提取 K 棒特弶（高度、寬度、上下影線等）
 3. 樓次分程 (train/test)
 4. 訓練高斩化模型（Random Forest / XGBoost）
 5. 計算標準 (accuracy, precision, recall, F1, AUC)
@@ -60,6 +60,18 @@ class FeatureEngineer:
         self.df = df.copy()
         self.feature_cols = []
     
+    def calculate_bollinger_bands_first(self, bb_period=20, bb_std=2):
+        """先計算 Bollinger Bands（徆不是例突突突）"""
+        logger.info(f'\n計算布林傑帶 (period={bb_period}, std={bb_std})...')
+        
+        self.df['sma'] = self.df['close'].rolling(window=bb_period).mean()
+        self.df['std'] = self.df['close'].rolling(window=bb_period).std()
+        self.df['upper_band'] = self.df['sma'] + (self.df['std'] * bb_std)
+        self.df['lower_band'] = self.df['sma'] - (self.df['std'] * bb_std)
+        self.df['bb_width'] = self.df['upper_band'] - self.df['lower_band']
+        
+        logger.info('布林傑帶計算完成')
+    
     def calculate_candle_features(self):
         """計算 K 棒特弶"""
         logger.info('\n計算 K 棒特弶...')
@@ -67,7 +79,7 @@ class FeatureEngineer:
         # 1. 体大 (高 - 低)
         self.df['body_size'] = self.df['high'] - self.df['low']
         
-        # 2. 寶寶 (|close - open|)
+        # 2. 寬度 (|close - open|)
         self.df['body'] = abs(self.df['close'] - self.df['open'])
         
         # 3. 上影線 (高 - max(open, close))
@@ -92,7 +104,7 @@ class FeatureEngineer:
         # 6. 方向 (1=上潈, -1=下潈)
         self.df['direction'] = np.where(self.df['close'] > self.df['open'], 1, -1)
         
-        # 7. 量次位援 (close 位於 [low, high] 中的位置)
+        # 7. 量次位置 (close 位於 [low, high] 中的位置)
         self.df['close_position'] = np.where(
             self.df['body_size'] > 0,
             (self.df['close'] - self.df['low']) / self.df['body_size'],
@@ -123,14 +135,14 @@ class FeatureEngineer:
         """計算布林傑帶特弶"""
         logger.info('\n計算布林傑帶特弶...')
         
-        # 子鎖嵰勢位置
+        # 子鎖走下位置
         self.df['bb_position'] = np.where(
             self.df['bb_width'] > 0,
             (self.df['close'] - self.df['lower_band']) / self.df['bb_width'],
             0.5
         )
         
-        # 子鎖比率
+        # 子鎖比例
         self.df['bb_width_ratio'] = np.where(
             self.df['close'] > 0,
             self.df['bb_width'] / self.df['close'],
@@ -187,7 +199,7 @@ class ModelTrainer:
         # 移除 label = -1 (沒有觸碰的K棒)
         df_clean = df_clean[df_clean['label'] != -1].copy()
         
-        logger.info(f'創子數量: {len(df_clean)}')
+        logger.info(f'佭冱數量: {len(df_clean)}')
         logger.info(f'  有盈利 (label=1/2): {(df_clean["label"] > 0).sum()}')
         logger.info(f'  無盈利 (label=0): {(df_clean["label"] == 0).sum()}')
         
@@ -287,7 +299,7 @@ class ModelTrainer:
     
     def get_feature_importance(self, top_n=10):
         """獲得特弶重要度"""
-        logger.info(f'\n前 {top_n} 个最重要的特弶:')
+        logger.info(f'\n前 {top_n} 個最重要的特弶:')
         logger.info('='*70)
         
         importances = self.model.feature_importances_
@@ -335,6 +347,9 @@ def main():
     
     # 提取特弶
     fe = FeatureEngineer(df)
+    
+    # 很重要：先計算 BB、然後計算其他特弶
+    fe.calculate_bollinger_bands_first(bb_period=20, bb_std=2)
     fe.calculate_candle_features()
     fe.calculate_volatility_features(window=20)
     fe.calculate_bb_features()
@@ -342,7 +357,7 @@ def main():
     feature_cols = fe.get_feature_columns()
     df = fe.df
     
-    logger.info(f'\n昨文特弶數量: {len(feature_cols)}')
+    logger.info(f'\n特弶數量: {len(feature_cols)}')
     logger.info(f'特弶列: {feature_cols}')
     
     # 訓練模型
