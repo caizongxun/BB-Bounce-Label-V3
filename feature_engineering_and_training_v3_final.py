@@ -25,7 +25,13 @@ from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, 
     f1_score, roc_auc_score, confusion_matrix, roc_curve
 )
-import talib
+
+# 下列是 talib 的下筫實現
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    HAS_TALIB = False
 
 # 配置
 warnings.filterwarnings('ignore')
@@ -34,6 +40,63 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# PART 0: 下筫技術指標實現 (talib 沒有的情況)
+# ============================================================================
+
+class TechnicalIndicators:
+    """技術指標的下筫實現"""
+    
+    @staticmethod
+    def RSI(prices, period=14):
+        """相對強弱指標"""
+        deltas = np.diff(prices)
+        seed = deltas[:period+1]
+        up = seed[seed >= 0].sum() / period
+        down = -seed[seed < 0].sum() / period
+        rs = up / down if down != 0 else 0
+        
+        rsi = np.zeros_like(prices, dtype=float)
+        rsi[:period] = 100. - 100. / (1. + rs)
+        
+        for i in range(period, len(prices)):
+            delta = deltas[i-1]
+            if delta > 0:
+                upval = delta
+                downval = 0.
+            else:
+                upval = 0.
+                downval = -delta
+            
+            up = (up * (period - 1) + upval) / period
+            down = (down * (period - 1) + downval) / period
+            
+            rs = up / down if down != 0 else 0
+            rsi[i] = 100. - 100. / (1. + rs)
+        
+        return rsi
+    
+    @staticmethod
+    def MACD(prices, fastperiod=12, slowperiod=26, signalperiod=9):
+        """動量收斂發散"""
+        ema_fast = pd.Series(prices).ewm(span=fastperiod).mean().values
+        ema_slow = pd.Series(prices).ewm(span=slowperiod).mean().values
+        macd = ema_fast - ema_slow
+        signal = pd.Series(macd).ewm(span=signalperiod).mean().values
+        hist = macd - signal
+        return macd, signal, hist
+    
+    @staticmethod
+    def ATR(high, low, close, period=14):
+        """平均真實波幅"""
+        tr1 = high - low
+        tr2 = np.abs(high - np.r_[close[0], close[:-1]])
+        tr3 = np.abs(low - np.r_[close[0], close[:-1]])
+        tr = np.max([tr1, tr2, tr3], axis=0)
+        atr = pd.Series(tr).rolling(window=period).mean().values
+        return atr
+
 
 # ============================================================================
 # PART 1: 進階標籤生成器
@@ -145,45 +208,58 @@ class AdvancedFeatureEngineer:
     def __init__(self, df):
         self.df = df.copy()
         self.features = []
+        self.indicators = TechnicalIndicators()
         
     def add_momentum_indicators(self):
         """添加動量指標"""
         logger.info("計算動量指標...")
         
-        # RSI (14)
         close = self.df['close'].values
-        self.df['RSI'] = talib.RSI(close, timeperiod=14)
+        
+        # RSI (14)
+        if HAS_TALIB:
+            self.df['RSI'] = talib.RSI(close, timeperiod=14)
+        else:
+            self.df['RSI'] = self.indicators.RSI(close, period=14)
         self.features.append('RSI')
         
         # MACD
-        macd, macd_signal, macd_hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+        if HAS_TALIB:
+            macd, macd_signal, macd_hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+        else:
+            macd, macd_signal, macd_hist = self.indicators.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
         self.df['MACD'] = macd
         self.df['MACD_Signal'] = macd_signal
         self.df['MACD_Hist'] = macd_hist
         self.features.extend(['MACD', 'MACD_Signal', 'MACD_Hist'])
         
-        # Stochastic Oscillator
-        k, d = talib.STOCH(self.df['high'].values, self.df['low'].values, close, 
-                          fastk_period=14, slowk_period=3, slowd_period=3)
-        self.df['Stoch_K'] = k
-        self.df['Stoch_D'] = d
-        self.features.extend(['Stoch_K', 'Stoch_D'])
-        
-        # Rate of Change (ROC)
-        self.df['ROC_10'] = talib.ROC(close, timeperiod=10)
+        # ROC (Rate of Change)
+        self.df['ROC_10'] = self.df['close'].pct_change(periods=10) * 100
         self.features.append('ROC_10')
+        
+        # Stochastic (簡化版)
+        window = 14
+        lowest_low = self.df['low'].rolling(window=window).min()
+        highest_high = self.df['high'].rolling(window=window).max()
+        self.df['Stoch_K'] = ((self.df['close'] - lowest_low) / (highest_high - lowest_low + 1e-8)) * 100
+        self.df['Stoch_D'] = self.df['Stoch_K'].rolling(window=3).mean()
+        self.features.extend(['Stoch_K', 'Stoch_D'])
         
     def add_volatility_indicators(self):
         """添加波動率指標"""
         logger.info("計算波動率指標...")
         
         # ATR (14)
-        self.df['ATR'] = talib.ATR(self.df['high'].values, self.df['low'].values, 
-                                   self.df['close'].values, timeperiod=14)
+        if HAS_TALIB:
+            self.df['ATR'] = talib.ATR(self.df['high'].values, self.df['low'].values, 
+                                       self.df['close'].values, timeperiod=14)
+        else:
+            self.df['ATR'] = self.indicators.ATR(self.df['high'].values, self.df['low'].values, 
+                                                self.df['close'].values, period=14)
         self.features.append('ATR')
         
         # 歷史波動率 (20日)
-        self.df['Historical_Vol'] = self.df['close'].pct_change().rolling(window=20).std()
+        self.df['Historical_Vol'] = self.df['close'].pct_change().rolling(window=20).std() * 100
         self.features.append('Historical_Vol')
         
         # Bollinger Bands Position (0-1)
@@ -191,12 +267,13 @@ class AdvancedFeatureEngineer:
         std = self.df['close'].rolling(window=20).std()
         bb_upper = sma + (std * 2)
         bb_lower = sma - (std * 2)
-        self.df['BB_Position'] = (self.df['close'] - bb_lower) / (bb_upper - bb_lower)
+        self.df['BB_Position'] = (self.df['close'] - bb_lower) / (bb_upper - bb_lower + 1e-8)
         self.df['BB_Position'] = self.df['BB_Position'].clip(0, 1)
         self.features.append('BB_Position')
         
         # 波幅比 (當前與平均)
-        self.df['Volatility_Ratio'] = self.df['Historical_Vol'] / self.df['Historical_Vol'].rolling(20).mean()
+        hist_vol_ma = self.df['Historical_Vol'].rolling(20).mean()
+        self.df['Volatility_Ratio'] = self.df['Historical_Vol'] / (hist_vol_ma + 1e-8)
         self.features.append('Volatility_Ratio')
         
     def add_trend_indicators(self):
@@ -204,14 +281,14 @@ class AdvancedFeatureEngineer:
         logger.info("計算趨勢指標...")
         
         # EMA (12 vs 26)
-        self.df['EMA_12'] = talib.EMA(self.df['close'].values, timeperiod=12)
-        self.df['EMA_26'] = talib.EMA(self.df['close'].values, timeperiod=26)
+        self.df['EMA_12'] = self.df['close'].ewm(span=12).mean()
+        self.df['EMA_26'] = self.df['close'].ewm(span=26).mean()
         self.df['EMA_Diff'] = self.df['EMA_12'] - self.df['EMA_26']
         self.features.extend(['EMA_12', 'EMA_26', 'EMA_Diff'])
         
         # SMA (20 vs 50)
-        self.df['SMA_20'] = talib.SMA(self.df['close'].values, timeperiod=20)
-        self.df['SMA_50'] = talib.SMA(self.df['close'].values, timeperiod=50)
+        self.df['SMA_20'] = self.df['close'].rolling(window=20).mean()
+        self.df['SMA_50'] = self.df['close'].rolling(window=50).mean()
         self.df['SMA_Ratio'] = self.df['SMA_20'] / (self.df['SMA_50'] + 1e-8)
         self.features.extend(['SMA_20', 'SMA_50', 'SMA_Ratio'])
         
@@ -224,8 +301,10 @@ class AdvancedFeatureEngineer:
         logger.info("計算成交量指標...")
         
         # OBV (On-Balance Volume)
-        self.df['OBV'] = talib.OBV(self.df['close'].values, self.df['volume'].values)
-        self.df['OBV_EMA'] = talib.EMA(self.df['OBV'].values, timeperiod=20)
+        obv = np.where(self.df['close'] > self.df['close'].shift(1), self.df['volume'], 
+                       np.where(self.df['close'] < self.df['close'].shift(1), -self.df['volume'], 0))
+        self.df['OBV'] = obv.cumsum()
+        self.df['OBV_EMA'] = self.df['OBV'].ewm(span=20).mean()
         self.features.extend(['OBV', 'OBV_EMA'])
         
         # 成交量相對變化
@@ -297,7 +376,7 @@ class AdvancedFeatureEngineer:
             self.features.append('RSI_ATR_Interaction')
         
         # MACD 與價格關係
-        if 'MACD' in self.df.columns:
+        if 'MACD' in self.df.columns and 'ATR' in self.df.columns:
             self.df['MACD_Normalized'] = self.df['MACD'] / (self.df['ATR'] + 1e-8)
             self.features.append('MACD_Normalized')
         
@@ -365,7 +444,7 @@ class ModelTrainer:
         # 計算類別權重
         neg_count = (self.y_train == 0).sum()
         pos_count = (self.y_train == 1).sum()
-        scale_pos_weight = neg_count / pos_count
+        scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1
         
         model = XGBClassifier(
             n_estimators=200,
@@ -470,6 +549,11 @@ def main():
     logger.info("\n" + "="*70)
     logger.info("特徵工程 + 模型訓練 V3 (完全重新設計)")
     logger.info("="*70 + "\n")
+    
+    # 棄華影响
+    if not HAS_TALIB:
+        logger.warning("\n警告: talib 未安裝。使用下筫實現的技術指標 (XGBoost)。")
+        logger.info("建議安裝: pip install talib-ng")
     
     # 1. 加載數據
     logger.info("第 1 階段：數據加載")
