@@ -1,5 +1,5 @@
 """
-基於盆市算法的盤子標籤創建
+基於盈市算法的盤子標籤創建
 
 都須項目：
 - 標您应該导有盆市K棺的窉位
@@ -46,24 +46,58 @@ class ProfitabilityLabelCreator:
         Path('outputs/analysis').mkdir(parents=True, exist_ok=True)
     
     def load_data(self, symbol: str, timeframe: str):
-        """載入 CSV 數據"""
+        """載入 CSV 數據並自動棄測列名"""
         csv_path = f'data/{symbol}_{timeframe}.csv'
         try:
             self.df = pd.read_csv(csv_path)
             logger.info(f'成功加載 {symbol}_{timeframe}: {len(self.df)} 行數據')
             
-            # 確保有必要的列
+            # 自動棄測列名（不同的數據源可能有不同的列名）
+            logger.info(f'查詢到的列：{self.df.columns.tolist()}')
+            
+            # 棄測並正正列名
+            col_mapping = {}
+            
+            # 惨找 open_time 列
+            time_cols = [col for col in self.df.columns if 'time' in col.lower()]
+            if time_cols:
+                col_mapping['open_time'] = time_cols[0]
+                logger.info(f'找到 open_time 列：{time_cols[0]}')
+            
+            # 惨找 OHLC 列
+            for target_col in ['open', 'high', 'low', 'close']:
+                for df_col in self.df.columns:
+                    if target_col.lower() == df_col.lower():
+                        col_mapping[target_col] = df_col
+                        break
+            
+            # 確保所有必需列都找到了
             required_cols = ['open', 'high', 'low', 'close', 'open_time']
-            if not all(col in self.df.columns for col in required_cols):
-                raise ValueError(f'缺少必要的列：{required_cols}')
+            missing_cols = [col for col in required_cols if col not in col_mapping]
+            
+            if missing_cols:
+                logger.error(f'找不到列：{missing_cols}')
+                logger.error(f'可用的列：{self.df.columns.tolist()}')
+                return False
+            
+            # 連置列名
+            self.df = self.df.rename(columns=col_mapping)
+            logger.info(f'列名棄測完成')
             
             # 轉換 open_time 為日期
-            self.df['open_time'] = pd.to_datetime(self.df['open_time'], unit='ms')
+            try:
+                self.df['open_time'] = pd.to_datetime(self.df['open_time'], unit='ms')
+            except:
+                try:
+                    self.df['open_time'] = pd.to_datetime(self.df['open_time'])
+                except:
+                    logger.warning('找不到有效的時間列')
+            
             self.df = self.df.sort_values('open_time').reset_index(drop=True)
             
             return True
         except FileNotFoundError:
-            logger.error(f'找不到數據文件：{csv_path}')
+            logger.error(f'找不到數據檔案：{csv_path}')
             return False
     
     def calculate_bollinger_bands(self, period=20, std_dev=2):
@@ -247,9 +281,6 @@ class ProfitabilityLabelCreator:
         logger.info('\n分析有盆市 K 棺特征...')
         logger.info('='*60)
         
-        # 我们可以添加更多技術指標
-        # 例如：RSI, MACD, 体积, 推动力等
-        
         # 計算設知者推动力（归一化辛加幅度）
         self.df['volatility'] = self.df['high'] - self.df['low']
         self.df['body_size'] = abs(self.df['close'] - self.df['open'])
@@ -316,7 +347,7 @@ class ProfitabilityLabelCreator:
 def main():
     """主函數"""
     logger.info('='*60)
-    logger.info('基於盆市算法的盤子標籤創建')
+    logger.info('基於盈市算法的盤子標籤創建')
     logger.info('='*60)
     
     creator = ProfitabilityLabelCreator()
