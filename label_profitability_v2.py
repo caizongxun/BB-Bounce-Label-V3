@@ -2,11 +2,11 @@
 基於盈利性的標籤創建 v2
 
 流程：
-1. 偵測所有觸碰或接近上下軌的 K 棒 (距離 < 0.05% BB 寶寶)
+1. 偵測所有觸碰或接近上下軌的 K 棒 (距離 < 0.05% BB 寬度)
 2. 分類成 有盈利 vs 無盈利
-   - 有盈利: 未來10根K棒有盈利 (最高/低算出輊錢)
-   - 無盈利: 未來10根K棒沒有盈利
-3. 僅會稉有盈利K棒作上團中弟築齐的分類
+   - 有盈利: 未來5根K棒有盈利 (最高/低算出盈利)
+   - 無盈利: 未來5根K棒沒有盈利
+3. 僅會盤有盈利K棒作上團中弟篇齊的分類
 """
 
 import pandas as pd
@@ -47,9 +47,9 @@ class ProfitabilityLabelCreatorV2:
                  holding_bars=5, profit_threshold=0.1):
         """
         Args:
-            bb_period: BB 計算週需
-            bb_std: BB 標正差倍數
-            touch_threshold_pct: 觸碰閾值 (相對於 BB 寶寶)
+            bb_period: BB 計算週期
+            bb_std: BB 標準差倍數
+            touch_threshold_pct: 觸碰閾值 (相對於 BB 寬度)
             holding_bars: 持有時間根數
             profit_threshold: 盈利最低閾值 (%)
         """
@@ -109,7 +109,7 @@ class ProfitabilityLabelCreatorV2:
         """
         偵測所有觸碰或接近上下軌的 K 棒
         
-        標正閾值：
+        標準閾值：
         - 下軌：(close - lower_band) / bb_width < touch_threshold_pct
         - 上軌：(upper_band - close) / bb_width < touch_threshold_pct
         """
@@ -155,7 +155,7 @@ class ProfitabilityLabelCreatorV2:
         """
         計算是否有盈利
         
-        標正：未來 holding_bars 根K棒的最高/低是否能盈利
+        標準：未來 holding_bars 根K棒的最高/低是否能盈利
         """
         if touch_idx + self.holding_bars >= len(self.df):
             return False, 0, 0
@@ -168,12 +168,12 @@ class ProfitabilityLabelCreatorV2:
         min_price = future_data['low'].min()
         
         if touch_type == 'lower':
-            # 做多：上潈是否能盈利
+            # 做多：上漲是否能盈利
             profit_pct = (max_price - entry_price) / entry_price * 100
             is_profitable = profit_pct >= self.profit_threshold
             return is_profitable, profit_pct, max_price
         else:  # upper
-            # 做空：下潈是否能盈利
+            # 做空：下跌是否能盈利
             profit_pct = (entry_price - min_price) / entry_price * 100
             is_profitable = profit_pct >= self.profit_threshold
             return is_profitable, profit_pct, min_price
@@ -183,9 +183,9 @@ class ProfitabilityLabelCreatorV2:
         為所有 K 棒創建標籤
         
         標籤定義：
-            1: 下軌有盈利 (做多有輊錢)
-            2: 上軌有盈利 (做空有輊錢)
-            0: 觸碰/接近但無盈利 (不應接)
+            1: 下軌有盈利 (做多有賺錢)
+            2: 上軌有盈利 (做空有賺錢)
+            0: 觸碰/接近但無盈利 (不應該接)
             -1: 沒有觸碰 (中性)
         """
         logger.info('\n為所有 K 棒創建標籤...')
@@ -228,7 +228,7 @@ class ProfitabilityLabelCreatorV2:
             lower_wr = lower_profitable / (lower_profitable + lower_unprofitable) * 100
             logger.info(f'  下軌勝率: {lower_wr:.2f}%')
         
-        logger.info()
+        logger.info('')
         logger.info(f'  上軌有盈利 (label=2): {upper_profitable}')
         logger.info(f'  上軌無盈利 (label=0): {upper_unprofitable}')
         if upper_profitable + upper_unprofitable > 0:
@@ -238,14 +238,14 @@ class ProfitabilityLabelCreatorV2:
         total_profitable = lower_profitable + upper_profitable
         total_unprofitable = lower_unprofitable + upper_unprofitable
         
-        logger.info()
+        logger.info('')
         logger.info(f'  總有盈利 K 棒: {total_profitable}')
         logger.info(f'  總無盈利 K 棒: {total_unprofitable}')
         logger.info(f'  無觸碰 K 棒: {(self.df["label"] == -1).sum()}')
         logger.info('='*60)
     
     def backtest_on_profitable_signals(self):
-        """回測：僅在有盈利 K 棒上做交易是否程輻 100%"""
+        """回測：僅在有盈利 K 棒上做交易是否達到 100%"""
         logger.info('\n回測：僅在有盈利K棒做交易...')
         logger.info('='*60)
         
@@ -265,7 +265,7 @@ class ProfitabilityLabelCreatorV2:
             long_wr = long_profitable / len(long_signals) * 100
             logger.info(f'\n做多信號 (下軌有盈利)')
             logger.info(f'  信號數: {len(long_signals)}')
-            logger.info(f'  輊錢信號: {long_profitable}')
+            logger.info(f'  盈利信號: {long_profitable}')
             logger.info(f'  勝率: {long_wr:.2f}%')
         
         # 做空信號 (上軌)
@@ -278,7 +278,7 @@ class ProfitabilityLabelCreatorV2:
             short_wr = short_profitable / len(short_signals) * 100
             logger.info(f'\n做空信號 (上軌有盈利)')
             logger.info(f'  信號數: {len(short_signals)}')
-            logger.info(f'  輊錢信號: {short_profitable}')
+            logger.info(f'  盈利信號: {short_profitable}')
             logger.info(f'  勝率: {short_wr:.2f}%')
         
         total_profitable = len(self.df[self.df['label'].isin([1, 2])])
@@ -286,9 +286,9 @@ class ProfitabilityLabelCreatorV2:
         
         if total_profitable > 0:
             overall_wr = total_winning / total_profitable * 100
-            logger.info(f'\n整體成總率')
+            logger.info(f'\n整體成功率')
             logger.info(f'  總信號數: {total_profitable}')
-            logger.info(f'  總輊錢數: {total_winning}')
+            logger.info(f'  總盈利數: {total_winning}')
             logger.info(f'  成功率: {overall_wr:.2f}%')
             logger.info(f'  目標: 100%')
         
