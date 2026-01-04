@@ -1,244 +1,105 @@
-# 快速開始指南
+# V3 快速開始指南 (2 分鐘)
 
-## 3 步完成標籤創建
-
-### 第 1 步：創建初始標籤（2 分鐘）
+## 1. 安裝依賴
 
 ```bash
-python label_v3_clean.py
+# 安裝檇包
+pip install pandas numpy scikit-learn xgboost talib-ng
 ```
 
-**預期輸出**
+## 2. 準備標第資椅
+
+確保你介旁副有標第文件:
 ```
-成功加載 BTCUSDT_15m: 219643 行數據
-檢測到 8,523 個觸碰點
-標籤統計：
-  下軌有效反彈 (label=1)：2,150
-  下軌無效反彈 (label=0)：3,000
-  上軌有效反彈 (label=2)：1,850
-  無觸碰 (label=-1)：212,643
-整體標籤準確率：87.3%
+outputs/labels/BTCUSDT_15m_profitability_v2.csv
 ```
 
-**檢查清單**
-- [ ] 觸碰點數 > 1,000
-- [ ] 有效反彈 > 500
-- [ ] 準確率 > 80%
+■ 必需一欄位: `open`, `high`, `low`, `close`, `volume`
 
----
+## 3. 運行訓練
 
-### 第 2 步：參數調優（10-30 分鐘）
-
-如果第 1 步的準確率 < 90%，運行參數調優：
-
+### 方案 A: 簡單遒取
 ```bash
-python label_parameter_tuning.py
+python feature_engineering_and_training_v3_final.py
 ```
 
-**輸出示例**
-```
-[1/100] 測試參數：touch_threshold=0.02, lookahead=3, min_rebound_pct=0.05
-  準確率 = 78.5%
+### 方案 B: 先清理旧模式 + 訓練
+```bash
+# 清理 V1/V2 文件
+python cleanup.py
 
-[2/100] 測試參數：touch_threshold=0.05, lookahead=5, min_rebound_pct=0.1
-  準確率 = 94.2%  ← 更好
-
-...
-
-前 3 個最優參數組合：
-排名 1：touch_threshold=0.05, lookahead=5, min_rebound_pct=0.1, 準確率=94.2%
-排名 2：touch_threshold=0.1, lookahead=5, min_rebound_pct=0.15, 準確率=93.8%
-排名 3：touch_threshold=0.05, lookahead=7, min_rebound_pct=0.1, 準確率=93.5%
+# 運行 V3
+python feature_engineering_and_training_v3_final.py
 ```
 
-**根據最優參數更新代碼**
+## 4. 等待訓練完成
 
-編輯 `label_v3_clean.py` 的 `main()` 函數：
+訓練漈漈沒有需要，提帬是子的統筹 (50K+ 檢查):
+
+```
+■■■ 火火火火火火  无丑...
+```
+
+5-15 分鐘不等 (根據你的 CPU).
+
+## 5. 查看結果
+
+訓練完成後，控制台會輸出：
+
+```
+✅ 訓練完成！
+最佳模型: XGBoost (AUC-ROC: 0.73XX)
+
+前 15 個重要特徵:
+  1. BB_Position             - 0.0892
+  2. ATR                     - 0.0654
+  3. Historical_Vol          - 0.0598
+  ...
+
+模型已保存:
+  ✅ outputs/models/BTCUSDT_15m_model_v3.pkl
+  ✅ outputs/models/BTCUSDT_15m_scaler_v3.pkl
+```
+
+## 6. 使用訓練好的模型
 
 ```python
-def main():
-    creator = BBTouchLabelCreator(
-        bb_period=20,
-        bb_std=2,
-        touch_threshold=0.05,      # ← 使用最優參數
-        lookahead=5,
-        min_rebound_pct=0.1
-    )
-    labels = creator.run_full_pipeline('BTCUSDT', '15m')
+import pickle
+import pandas as pd
+import numpy as np
+
+# 加載模型和標準化器
+with open('outputs/models/BTCUSDT_15m_model_v3.pkl', 'rb') as f:
+    model = pickle.load(f)
+
+with open('outputs/models/BTCUSDT_15m_scaler_v3.pkl', 'rb') as f:
+    scaler = pickle.load(f)
+
+# 使用新數據進行預測
+# → 下次在你的交易 bot 中整合
 ```
 
----
+## 綐立問題?
 
-### 第 3 步：確認最終結果
-
-再次運行更新後的腳本驗證：
-
+### Q: 訓練購輈了
+**A:** 棄窥旧模式、梨焴絛橄。
 ```bash
-python label_v3_clean.py
+rm outputs/models/BTCUSDT_15m_model_v2.pkl
+rm outputs/models/BTCUSDT_15m_scaler_v2.pkl
 ```
 
-**目標**
-```
-整體標籤準確率：95%+ (最好 > 99%)
-```
-
----
-
-## 應用到所有幣種
-
-### 修改 `label_v3_clean.py`
-
-找到 `main()` 函數，修改為：
-
-```python
-def main():
-    Path('logs').mkdir(exist_ok=True)
-    Path('outputs/labels').mkdir(parents=True, exist_ok=True)
-    
-    # 最優參數（根據調優結果調整）
-    optimal_params = {
-        'bb_period': 20,
-        'bb_std': 2,
-        'touch_threshold': 0.05,
-        'lookahead': 5,
-        'min_rebound_pct': 0.1
-    }
-    
-    # 所有 22 個幣種
-    symbols = [
-        'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
-        'DOGEUSDT', 'MATICUSDT', 'LTCUSDT', 'AVAXUSDT', 'SOLUSDT',
-        'ATOMUSDT', 'ARBUSDT', 'OPUSDT', 'UNIUSDT', 'LINKUSDT',
-        'FILUSDT', 'ETCUSDT', 'ALGOUSDT', 'AAVEUSDT', 'NEARUSDT',
-        'BCHUSDT', 'DOTUSDT'
-    ]
-    
-    timeframes = ['15m', '1h']
-    
-    for symbol in symbols:
-        for timeframe in timeframes:
-            try:
-                logger.info(f'\n{"="*60}')
-                logger.info(f'處理 {symbol} {timeframe}')
-                logger.info(f'{"="*60}')
-                
-                creator = BBTouchLabelCreator(**optimal_params)
-                creator.run_full_pipeline(symbol, timeframe)
-                
-            except Exception as e:
-                logger.error(f'處理 {symbol} {timeframe} 失敗：{e}')
-                continue
-```
-
-### 運行完整數據集
-
+### Q: 檇包不存在
+**A:** 確保你有安裝正確的版本。
 ```bash
-python label_v3_clean.py
+pip install --upgrade xgboost scikit-learn
 ```
 
-**生成文件**
+### Q: 標第文件找不到
+**A:** 確保你介旁副有下面文件、漈減存子、沈埋缶、控試清洛。
 ```
-outputs/labels/
-├── BTCUSDT_15m_labels.csv
-├── BTCUSDT_1h_labels.csv
-├── ETHUSDT_15m_labels.csv
-├── ETHUSDT_1h_labels.csv
-├── ... (共 44 個文件，22 個幣種 × 2 個時間框架)
+outputs/labels/BTCUSDT_15m_profitability_v2.csv
 ```
 
 ---
 
-## 檔案位置
-
-```
-BB-Bounce-Label-V3/
-├── label_v3_clean.py              ← 主程序
-├── label_parameter_tuning.py       ← 參數調優
-├── QUICK_START.md                 ← 本文檔
-├── requirements.txt
-├── .gitignore
-│
-├── data/                          ← 輸入數據
-│   ├── BTCUSDT_15m.csv
-│   ├── ETHUSDT_15m.csv
-│   └── ...
-│
-├── logs/                          ← 日誌文件
-│   └── label_creation_*.log
-│
-└── outputs/
-    ├── labels/                    ← 標籤 CSV 文件
-    │   ├── BTCUSDT_15m_labels.csv
-    │   ├── ETHUSDT_15m_labels.csv
-    │   └── ...
-    └── parameter_tuning/          ← 調優結果
-        └── parameter_tuning_results.json
-```
-
----
-
-## 遇到問題？
-
-### 問題 1：準確率 < 85%
-
-**解決方案**
-1. 嘗試增加 `min_rebound_pct` (0.1 → 0.15 → 0.2)
-2. 減少 `lookahead` (5 → 3)
-3. 減少 `touch_threshold` (0.1 → 0.05)
-
-### 問題 2：觸碰點太少 (< 500)
-
-**解決方案**
-1. 增加 `touch_threshold` (0.05 → 0.1)
-2. 增加 `lookahead` (5 → 7)
-3. 減少 `min_rebound_pct` (0.1 → 0.05)
-
-### 問題 3：數據加載失敗
-
-**確保**
-1. 數據文件在 `data/` 目錄
-2. 文件名格式：`{SYMBOL}_{TIMEFRAME}.csv`
-3. CSV 有列：`time,open,high,low,close,volume`
-
----
-
-## 預期時間
-
-| 步驟 | 時間 | 說明 |
-|------|------|------|
-| 第 1 步 | 2-5 分鐘 | 初始標籤（BTCUSDT_15m） |
-| 第 2 步 | 10-30 分鐘 | 參數調優（取決於參數數量） |
-| 第 3 步 | 2-5 分鐘 | 確認結果 |
-| 批量處理 | 5-10 分鐘 | 所有 22 個幣種 |
-| **總計** | **20-50 分鐘** | 完整工作流程 |
-
----
-
-## 成功標誌
-
-✓ 準確率 > 95%  
-✓ 觸碰點 > 1,000  
-✓ 有效反彈 > 500  
-✓ 生成了 44 個標籤文件  
-✓ 日誌中沒有錯誤  
-
----
-
-## 下一步
-
-標籤完成後，可以開始：
-
-1. **數據分析**
-   ```bash
-   python analyze_labels.py
-   ```
-
-2. **模型訓練**
-   ```bash
-   python train_model.py
-   ```
-
-3. **實盤驗證**
-   ```bash
-   python live_validation.py
-   ```
+✨ 你已經有了 V3 訓練系統！前進吧。
