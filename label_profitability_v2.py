@@ -2,18 +2,25 @@
 基於盈利性的標籤創建 v2
 
 流程：
-1. 棄測所有觸碰或接近上下軌的 K 棒 (距離 < 0.05% BB 寶寶)
+1. 偵測所有觸碰或接近上下軌的 K 棒 (距離 < 0.05% BB 寶寶)
 2. 分類成 有盈利 vs 無盈利
-   - 有盈利: 未來5根K棒有輊錢程輻 (最高/低算出成總)
-   - 無盈利: 未來5根K棒沒有輊錢程輻
-3. 僅會稉有盈利K棒作上團中弟築齐的需要週應的分類（剝滿後适逛 凌)
+   - 有盈利: 未來10根K棒有盈利 (最高/低算出輊錢)
+   - 無盈利: 未來10根K棒沒有盈利
+3. 僅會稉有盈利K棒作上團中弟築齐的分類
 """
 
 import pandas as pd
 import numpy as np
 import logging
+import sys
+import io
 from datetime import datetime
 from pathlib import Path
+
+# 設置 UTF-8 編碼
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # 設置日誌
 Path('logs').mkdir(exist_ok=True)
@@ -23,25 +30,28 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f'logs/label_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
-        logging.StreamHandler()
+        logging.FileHandler(
+            f'logs/label_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+            encoding='utf-8'
+        ),
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
 
 
 class ProfitabilityLabelCreatorV2:
-    """第二版本：基於盈利性的盤子標籤創建器"""
+    """第二版本：基於盈利性的標籤創建器"""
     
     def __init__(self, bb_period=20, bb_std=2, touch_threshold_pct=0.05, 
                  holding_bars=5, profit_threshold=0.1):
         """
         Args:
-            bb_period: BB 計算啊臨
-            bb_std: BB 標橫差倍源
+            bb_period: BB 計算週需
+            bb_std: BB 標正差倍數
             touch_threshold_pct: 觸碰閾值 (相對於 BB 寶寶)
-            holding_bars: 持有時間根上團中弟築齐的根數
-            profit_threshold: 盈利最低阀值 (%)
+            holding_bars: 持有時間根數
+            profit_threshold: 盈利最低閾值 (%)
         """
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -50,20 +60,20 @@ class ProfitabilityLabelCreatorV2:
         self.profit_threshold = profit_threshold
         
         self.df = None
-        self.touch_indices = []  # 存儲所有觸碰 K 棒的 index
+        self.touch_indices = []
     
     def load_data(self, symbol: str, timeframe: str):
-        """載入數據並自動檢測列名"""
+        """載入數據並自動偵測列名"""
         csv_path = f'data/{symbol}_{timeframe}.csv'
         try:
             self.df = pd.read_csv(csv_path)
             logger.info(f'成功加載 {symbol}_{timeframe}: {len(self.df)} 行數據')
             
-            # 自動檢測並重命名列
+            # 自動偵測列名
             if 'timestamp' in self.df.columns:
                 self.df = self.df.rename(columns={'timestamp': 'open_time'})
             
-            # 檢查所有必要列
+            # 檢查所有必需列
             required_cols = ['open', 'high', 'low', 'close']
             missing_cols = [col for col in required_cols if col not in self.df.columns]
             if missing_cols:
@@ -97,16 +107,16 @@ class ProfitabilityLabelCreatorV2:
     
     def detect_touches_and_near(self):
         """
-        棄測所有觸碰或接近上下軌的 K 棒
+        偵測所有觸碰或接近上下軌的 K 棒
         
         標正閾值：
         - 下軌：(close - lower_band) / bb_width < touch_threshold_pct
         - 上軌：(upper_band - close) / bb_width < touch_threshold_pct
         """
-        logger.info(f'\n棄測觸碰及接近 (閾值: {self.touch_threshold_pct}%)...')
+        logger.info(f'\n偵測觸碰及接近 (閾值: {self.touch_threshold_pct}%)...')
         
         touches = []
-        touch_types = {}  # {index: 'lower' or 'upper'}
+        touch_types = {}
         
         for i in range(self.bb_period, len(self.df) - self.holding_bars):
             row = self.df.iloc[i]
@@ -135,7 +145,7 @@ class ProfitabilityLabelCreatorV2:
         self.touch_indices = touches
         self.touch_types = touch_types
         
-        logger.info(f'棄測到 {len(touches)} 個觸碰/接近 K 棒')
+        logger.info(f'偵測到 {len(touches)} 個觸碰/接近 K 棒')
         logger.info(f'  下軌 (做多): {sum(1 for t in touch_types.values() if t == "lower")}')
         logger.info(f'  上軌 (做空): {sum(1 for t in touch_types.values() if t == "upper")}')
         
@@ -145,25 +155,25 @@ class ProfitabilityLabelCreatorV2:
         """
         計算是否有盈利
         
-        標正：未來 holding_bars 根K棒的最高/低是否能輊錢
+        標正：未來 holding_bars 根K棒的最高/低是否能盈利
         """
         if touch_idx + self.holding_bars >= len(self.df):
             return False, 0, 0
         
         entry_price = self.df.iloc[touch_idx]['close']
         
-        # 獲得未來5根K棒
+        # 獲得未來10根K棒
         future_data = self.df.iloc[touch_idx + 1:touch_idx + self.holding_bars + 1]
         max_price = future_data['high'].max()
         min_price = future_data['low'].min()
         
         if touch_type == 'lower':
-            # 做多：上潈是否能輊錢
+            # 做多：上潈是否能盈利
             profit_pct = (max_price - entry_price) / entry_price * 100
             is_profitable = profit_pct >= self.profit_threshold
             return is_profitable, profit_pct, max_price
         else:  # upper
-            # 做空：下潈是否能輊錢
+            # 做空：下潈是否能盈利
             profit_pct = (entry_price - min_price) / entry_price * 100
             is_profitable = profit_pct >= self.profit_threshold
             return is_profitable, profit_pct, min_price
@@ -180,9 +190,9 @@ class ProfitabilityLabelCreatorV2:
         """
         logger.info('\n為所有 K 棒創建標籤...')
         
-        self.df['label'] = -1  # 預設: 無觸碰
-        self.df['profit_pct'] = np.nan  # 存儲盈利率
-        self.df['target_price'] = np.nan  # 存儲盤子邮趣標點
+        self.df['label'] = -1
+        self.df['profit_pct'] = np.nan
+        self.df['target_price'] = np.nan
         
         lower_profitable = 0
         lower_unprofitable = 0
@@ -235,12 +245,8 @@ class ProfitabilityLabelCreatorV2:
         logger.info('='*60)
     
     def backtest_on_profitable_signals(self):
-        """
-        回測：仅在有盈利 K 棒上做交易是否加成 100%
-        
-        頂職內容：有盈利的 K 棒 扮は精選獨有輊錢程輻 （丢學未来）。何於銷一個有盈利K棒是否輊錢？是我算法基於未來5根K棒最高/低點能否輊錢的。
-        """
-        logger.info('\n回測：仅在有盈利K棒做交易...')
+        """回測：僅在有盈利 K 棒上做交易是否程輻 100%"""
+        logger.info('\n回測：僅在有盈利K棒做交易...')
         logger.info('='*60)
         
         profitable_signals = self.df[self.df['label'].isin([1, 2])]
@@ -292,7 +298,7 @@ class ProfitabilityLabelCreatorV2:
         """保存標籤到 CSV"""
         output_path = f'outputs/labels/{symbol}_{timeframe}_profitability_v2.csv'
         
-        # 只保存子集專用列
+        # 只保存需要的列
         output_df = self.df[[
             'open', 'high', 'low', 'close', 'label', 'profit_pct', 'target_price'
         ]].copy()
@@ -302,7 +308,7 @@ class ProfitabilityLabelCreatorV2:
                 'open_time', 'open', 'high', 'low', 'close', 'label', 'profit_pct', 'target_price'
             ]].copy()
         
-        output_df.to_csv(output_path, index=False)
+        output_df.to_csv(output_path, index=False, encoding='utf-8')
         logger.info(f'\n標籤已保存到: {output_path}')
     
     def run_full_pipeline(self, symbol: str, timeframe: str):
@@ -318,7 +324,7 @@ class ProfitabilityLabelCreatorV2:
         # 2. 計算 BB
         self.calculate_bollinger_bands()
         
-        # 3. 棄測觸碰及接近
+        # 3. 偵測觸碰及接近
         self.detect_touches_and_near()
         
         # 4. 創建標籤
@@ -337,15 +343,15 @@ class ProfitabilityLabelCreatorV2:
 
 def main():
     logger.info('\n' + '='*60)
-    logger.info('基於盈利性的盤子標籤創建 v2')
+    logger.info('基於盈利性的標籤創建 v2')
     logger.info('='*60)
     
     creator = ProfitabilityLabelCreatorV2(
         bb_period=20,
         bb_std=2,
-        touch_threshold_pct=0.05,  # 0.05% 閾值
-        holding_bars=5,            # 5 根 K 棒
-        profit_threshold=0.1       # 0.1% 最低盈利
+        touch_threshold_pct=0.05,
+        holding_bars=5,
+        profit_threshold=0.1
     )
     
     creator.run_full_pipeline('BTCUSDT', '15m')
