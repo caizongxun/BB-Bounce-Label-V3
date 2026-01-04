@@ -26,7 +26,7 @@ from sklearn.metrics import (
     f1_score, roc_auc_score, confusion_matrix, roc_curve
 )
 
-# 下列是 talib 的下筫實現
+# 下列是 talib 的下筆實現
 try:
     import talib
     HAS_TALIB = True
@@ -42,11 +42,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# PART 0: 下筫技術指標實現 (talib 沒有的情況)
+# PART 0: 下筆技術指標實現 (talib 沒有的情況)
 # ============================================================================
 
 class TechnicalIndicators:
-    """技術指標的下筫實現"""
+    """技術指標的下筆實現"""
     
     @staticmethod
     def RSI(prices, period=14):
@@ -99,107 +99,13 @@ class TechnicalIndicators:
 
 
 # ============================================================================
-# PART 1: 進階標籤生成器
-# ============================================================================
-
-class AdvancedLabelGenerator:
-    """
-    改進的標籤生成邏輯:
-    - 識別確實觸碰下軌的點
-    - 檢查未來 5 根 K 棒的獲利潛力
-    - 加權考慮波幅和獲利幅度
-    """
-    
-    def __init__(self, df, bb_period=20, bb_std=2, lookforward=5, profit_threshold=0.001):
-        self.df = df.copy()
-        self.bb_period = bb_period
-        self.bb_std = bb_std
-        self.lookforward = lookforward
-        self.profit_threshold = profit_threshold
-        
-        logger.info("初始化進階標籤生成器...")
-        self._calculate_bollinger_bands()
-        
-    def _calculate_bollinger_bands(self):
-        """計算布林傑帶"""
-        self.df['SMA'] = self.df['close'].rolling(window=self.bb_period).mean()
-        self.df['STD'] = self.df['close'].rolling(window=self.bb_period).std()
-        self.df['BB_Upper'] = self.df['SMA'] + (self.df['STD'] * self.bb_std)
-        self.df['BB_Lower'] = self.df['SMA'] - (self.df['STD'] * self.bb_std)
-        self.df['BB_Middle'] = self.df['SMA']
-        
-    def _detect_lower_band_touch(self):
-        """
-        檢測觸碰下軌的點:
-        - low <= BB_Lower
-        - 非極端情況 (避免崩盤)
-        """
-        self.df['touches_lower'] = False
-        
-        for i in range(self.bb_period, len(self.df)):
-            if pd.notna(self.df.loc[i, 'BB_Lower']):
-                # 低點 <= 下軌
-                if self.df.loc[i, 'low'] <= self.df.loc[i, 'BB_Lower']:
-                    self.df.loc[i, 'touches_lower'] = True
-                    
-    def _calculate_future_profitability(self):
-        """
-        計算未來 N 根 K 棒的獲利能力:
-        - 從觸碰點的低點開始
-        - 計算未來最高點的獲利 %
-        - 考慮波幅加權
-        """
-        self.df['label'] = 0  # 默認無盈利
-        
-        for i in range(len(self.df) - self.lookforward):
-            if not self.df.loc[i, 'touches_lower']:
-                continue
-                
-            # 當前低點（觸碰點）
-            touch_low = self.df.loc[i, 'low']
-            
-            # 未來 N 根 K 棒的最高點
-            future_high = self.df.loc[i:i+self.lookforward, 'high'].max()
-            
-            # 計算獲利百分比
-            if touch_low > 0:
-                profit_pct = (future_high - touch_low) / touch_low
-                
-                # 考慮 ATR 加權：大波幅時要求更高的絕對獲利
-                atr = self.df.loc[i, 'ATR'] if 'ATR' in self.df.columns else 0
-                adjusted_threshold = self.profit_threshold
-                
-                if atr > 0:
-                    # 波幅越大，要求越高
-                    adjusted_threshold *= (1 + atr / touch_low)
-                
-                # 標籤: 1 = 盈利, 0 = 不盈利
-                if profit_pct >= adjusted_threshold:
-                    self.df.loc[i, 'label'] = 1
-                    
-    def generate_labels(self):
-        """生成完整標籤"""
-        self._detect_lower_band_touch()
-        self._calculate_future_profitability()
-        
-        # 統計
-        touch_count = self.df['touches_lower'].sum()
-        profitable_count = (self.df[self.df['touches_lower']]['label'] == 1).sum()
-        
-        logger.info(f"觸碰下軌點數: {touch_count}")
-        logger.info(f"其中盈利: {profitable_count} ({100*profitable_count/max(touch_count,1):.1f}%)")
-        
-        return self.df[['label', 'touches_lower']]
-
-
-# ============================================================================
-# PART 2: 多層特徵工程
+# PART 1: 多層特徵工程
 # ============================================================================
 
 class AdvancedFeatureEngineer:
     """
     多層特徵工程:
-    Layer 1: 技術指標 (RSI, MACD, OBV, Stochastic)
+    Layer 1: 技術指標 (RSI, MACD, Stochastic, ROC)
     Layer 2: 波動率相關 (ATR, Historical Vol, BB Position)
     Layer 3: 時序特徵 (Momentum, Trend, Pattern)
     Layer 4: 統計特徵 (Skewness, Kurtosis)
@@ -300,30 +206,25 @@ class AdvancedFeatureEngineer:
         """添加成交量指標"""
         logger.info("計算成交量指標...")
         
-        # OBV (On-Balance Volume)
-        obv = np.where(self.df['close'] > self.df['close'].shift(1), self.df['volume'], 
-                       np.where(self.df['close'] < self.df['close'].shift(1), -self.df['volume'], 0))
-        self.df['OBV'] = obv.cumsum()
-        self.df['OBV_EMA'] = self.df['OBV'].ewm(span=20).mean()
-        self.features.extend(['OBV', 'OBV_EMA'])
+        # 簡化的 OBV
+        obv = np.where(self.df['close'] > self.df['close'].shift(1), 1, 
+                       np.where(self.df['close'] < self.df['close'].shift(1), -1, 0))
+        self.df['OBV_Direction'] = obv
+        self.features.append('OBV_Direction')
         
-        # 成交量相對變化
-        self.df['Volume_MA'] = self.df['volume'].rolling(window=20).mean()
-        self.df['Volume_Ratio'] = self.df['volume'] / (self.df['Volume_MA'] + 1e-8)
-        self.features.extend(['Volume_MA', 'Volume_Ratio'])
+        # K棒大小與波幅
+        self.df['Body_Size'] = np.abs(self.df['close'] - self.df['open'])
+        self.df['True_Range'] = self.df['high'] - self.df['low']
+        self.features.extend(['Body_Size', 'True_Range'])
         
     def add_candle_patterns(self):
         """添加 K 棒形態特徵"""
-        logger.info("計算 K 棒形態特徵...")
+        logger.info("計算 K 棒形態...")
         
         o = self.df['open'].values
         h = self.df['high'].values
         l = self.df['low'].values
         c = self.df['close'].values
-        
-        # 身體大小
-        self.df['Body_Size'] = np.abs(c - o)
-        self.features.append('Body_Size')
         
         # 上影線
         self.df['Upper_Wick'] = h - np.maximum(o, c)
@@ -398,7 +299,7 @@ class AdvancedFeatureEngineer:
 
 
 # ============================================================================
-# PART 3: 模型訓練與評估
+# PART 2: 模型訓練與評估
 # ============================================================================
 
 class ModelTrainer:
@@ -414,7 +315,7 @@ class ModelTrainer:
         self.results = {}
         
     def prepare_data(self):
-        """準備數據"""
+        """準備訓練數據"""
         logger.info("準備訓練數據...")
         
         # 移除含 NaN 的行
@@ -550,10 +451,10 @@ def main():
     logger.info("特徵工程 + 模型訓練 V3 (完全重新設計)")
     logger.info("="*70 + "\n")
     
-    # 棄華影响
+    # 棄舊影響
     if not HAS_TALIB:
-        logger.warning("\n警告: talib 未安裝。使用下筫實現的技術指標 (XGBoost)。")
-        logger.info("建議安裝: pip install talib-ng")
+        logger.warning("\n警告: talib 未安裝。使用下層實現的技術指標 (XGBoost)。")
+        logger.info("建議安裝: pip install talib-ng (可選，用於性能優化)")
     
     # 1. 加載數據
     logger.info("第 1 階段：數據加載")
@@ -567,26 +468,33 @@ def main():
     df = pd.read_csv(label_path)
     logger.info(f"加載 {len(df)} 行數據")
     
-    # 2. 進階標籤生成
-    logger.info("\n第 2 階段：進階標籤生成")
+    # 2. 篩選有效數據 (label != -1)
+    logger.info("\n第 2 階段：數據過濾")
     logger.info("="*70)
     
-    label_gen = AdvancedLabelGenerator(df, bb_period=20, bb_std=2, lookforward=5, profit_threshold=0.001)
-    df = label_gen.generate_labels()
+    # 只保留標籤為 0 或 1 的行
+    df_valid = df[df['label'].isin([0, 1])].copy()
+    logger.info(f"篩選後樣本數: {len(df_valid)}")
+    logger.info(f"  無盈利 (label=0): {(df_valid['label'] == 0).sum()}")
+    logger.info(f"  有盈利 (label=1): {(df_valid['label'] == 1).sum()}")
+    
+    if len(df_valid) < 1000:
+        logger.error("有效樣本數過少 (< 1000)，無法訓練")
+        return
     
     # 3. 特徵工程
     logger.info("\n第 3 階段：多層特徵工程")
     logger.info("="*70)
     
-    engineer = AdvancedFeatureEngineer(df)
-    df, features = engineer.engineer_all_features()
+    engineer = AdvancedFeatureEngineer(df_valid)
+    df_features, features = engineer.engineer_all_features()
     
     # 4. 模型訓練
     logger.info("\n第 4 階段：模型訓練與評估")
     logger.info("="*70)
     
-    X = df[features]
-    y = df['label']
+    X = df_features[features]
+    y = df_features['label']
     
     trainer = ModelTrainer(X, y)
     best_model, best_model_name = trainer.train_all()
